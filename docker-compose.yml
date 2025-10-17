@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  app:
+    container_name: opengrc_app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - .:/var/www/html
+    ports:
+      - "8000:80"
+    environment:
+      APP_ENV: "production"
+      APP_DEBUG: "false"
+      APP_KEY: "${APP_KEY}"
+    restart: always
+    depends_on:
+      - phpmyadmin
+    networks:
+      - opengrc_net
+    command: >
+      bash -c "php artisan migrate --force &&
+               php artisan serve --host=0.0.0.0 --port=80"
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: opengrc_phpmyadmin
+    restart: always
+    ports:
+      - "8080:80"
+    environment:
+      PMA_ARBITRARY: "1"
+      PMA_HOST: "opengrc-db.cpguswyigskp.ap-south-1.rds.amazonaws.com"
+      PMA_USER: "admin"
+      PMA_PASSWORD: "StrongPass123!"
+    networks:
+      - opengrc_net
+
+networks:
+  opengrc_net:
+    driver: bridge

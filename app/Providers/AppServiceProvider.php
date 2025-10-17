@@ -9,9 +9,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
-use Schema;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -22,26 +23,30 @@ class AppServiceProvider extends ServiceProvider
     {
         // Disable mass assignment protection
         Model::unguard();
+
         if (! $this->app->environment('local')) {
             URL::forceScheme('https');
         }
 
-        // Only skip the install check if running the installer command
+        // Detect if we are running installer/maintenance commands
         $isInstaller = false;
         if ($this->app->runningInConsole()) {
             $argv = $_SERVER['argv'] ?? [];
-            if (isset($argv[1]) && (
-                $argv[1] === 'opengrc:install'
-            || $argv[1] === 'opengrc:deploy'
-            || $argv[1] === 'package:discover'
-            || $argv[1] === 'filament:upgrade'
-            || $argv[1] === 'vendor:publish'
-            )) {
+            if (isset($argv[1]) && in_array($argv[1], [
+                'opengrc:install',
+                'opengrc:deploy',
+                'package:discover',
+                'filament:upgrade',
+                'vendor:publish',
+                'migrate',
+                'db:seed'
+            ])) {
                 $isInstaller = true;
             }
         }
 
         if (! $isInstaller) {
+            // Check if settings table exists
             if (Schema::hasTable('settings')) {
 
                 Config::set('app.name', setting('general.name', 'OpenGRC'));
@@ -75,7 +80,6 @@ class AppServiceProvider extends ServiceProvider
                     $s3Key = setting('storage.s3.key');
                     $s3Secret = setting('storage.s3.secret');
 
-                    // Decrypt credentials if they exist and are encrypted
                     try {
                         if (! empty($s3Key)) {
                             $s3Key = Crypt::decryptString($s3Key);
@@ -83,6 +87,7 @@ class AppServiceProvider extends ServiceProvider
                         if (! empty($s3Secret)) {
                             $s3Secret = Crypt::decryptString($s3Secret);
                         }
+
                         config()->set('filesystems.disks.s3', array_merge(config('filesystems.disks.s3', []), [
                             'driver' => 's3',
                             'key' => $s3Key,
@@ -92,23 +97,17 @@ class AppServiceProvider extends ServiceProvider
                             'use_path_style_endpoint' => false,
                         ]));
                     } catch (\Exception $e) {
-                        // If decryption fails, log it but don't expose the error
-                        \Log::error('Failed to decrypt S3 credentials: '.$e->getMessage());
-                        // Fall back to local storage if S3 credentials can't be decrypted
+                        Log::error('Failed to decrypt S3 credentials: ' . $e->getMessage());
                         $storageDriver = 'private';
                     }
                 }
 
-                // Set the default filesystem driver
                 config()->set('filesystems.default', $storageDriver);
-
-                // Set session lifetime from settings
                 Config::set('session.lifetime', setting('security.session_timeout', 15));
+
             } else {
-                // if table "settings" does not exist
-                // Error that app was not installed properly
-                abort(500, 'OpenGRC was not installed properly. Please review the
-                installation guide at https://docs.opengrc.com to install the app.');
+                // ✅ Changed: Don't abort — just log warning for first-time setup
+                Log::warning('Settings table not found. Skipping install check until first migration is complete.');
             }
         }
 
@@ -117,8 +116,7 @@ class AppServiceProvider extends ServiceProvider
         });
 
         LanguageSwitch::configureUsing(function (LanguageSwitch $switch) {
-            $switch
-                ->locales(['en', 'es', 'fr', 'hr']);
+            $switch->locales(['en', 'es', 'fr', 'hr']);
         });
 
         FilamentColor::register([
@@ -148,7 +146,6 @@ class AppServiceProvider extends ServiceProvider
                 950 => '69, 10, 10',
             ],
         ]);
-
     }
 
     /**
